@@ -208,6 +208,23 @@ h3 {
   transition: transform 0.16s ease, box-shadow 0.16s ease;
 }
 
+.social-btn {
+  margin-top: 2px;
+  border: 1px solid rgba(31, 42, 40, 0.2);
+  border-radius: 14px;
+  padding: 11px 14px;
+  background: #fff;
+  color: #1f2a28;
+  font-weight: 800;
+  cursor: pointer;
+  transition: transform 0.16s ease, box-shadow 0.16s ease;
+}
+
+.social-btn:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 10px 20px rgba(21, 35, 34, 0.08);
+}
+
 .cta-btn {
   margin-top: 10px;
   background: linear-gradient(120deg, #c65d27, #e07b43);
