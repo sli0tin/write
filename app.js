@@ -2,8 +2,11 @@ import { initializeApp } from "https://www.gstatic.com/firebasejs/10.14.1/fireba
 import {
   createUserWithEmailAndPassword,
   getAuth,
+  GoogleAuthProvider,
   onAuthStateChanged,
   signInWithEmailAndPassword,
+  signInWithPopup,
+  signInWithRedirect,
   signOut,
   updateProfile,
 } from "https://www.gstatic.com/firebasejs/10.14.1/firebase-auth.js";
@@ -23,6 +26,7 @@ const firebaseConfig = {
 const firebaseApp = initializeApp(firebaseConfig);
 const auth = getAuth(firebaseApp);
 const db = getDatabase(firebaseApp);
+const googleProvider = new GoogleAuthProvider();
 
 const numberFormat = new Intl.NumberFormat("ar-EG");
 
@@ -43,6 +47,7 @@ const refs = {
   authConfirm: document.getElementById("auth-confirm"),
   confirmWrap: document.getElementById("confirm-wrap"),
   authSubmit: document.getElementById("auth-submit"),
+  googleLoginBtn: document.getElementById("google-login-btn"),
   authStatus: document.getElementById("auth-status"),
   welcomeText: document.getElementById("welcome-text"),
   homeEmpty: document.getElementById("home-empty"),
@@ -104,6 +109,8 @@ onAuthStateChanged(auth, async (user) => {
     return;
   }
 
+  await ensureUserProfile(user);
+
   const profileSnap = await get(ref(db, `users/${user.uid}/profile`));
   const profile = profileSnap.exists() ? profileSnap.val() : {};
   state.username = user.displayName || profile.username || "كاتب";
@@ -132,6 +139,7 @@ function bindUI() {
   refs.loginModeBtn.addEventListener("click", () => setAuthMode("login"));
   refs.signupModeBtn.addEventListener("click", () => setAuthMode("signup"));
   refs.authForm.addEventListener("submit", handleAuthSubmit);
+  refs.googleLoginBtn.addEventListener("click", handleGoogleSignIn);
 
   refs.storyTitleInput.addEventListener("input", () => {
     scheduleSave("story", saveCurrentStory);
@@ -226,6 +234,32 @@ async function handleAuthSubmit(event) {
     refs.authStatus.style.color = "#b3261e";
     refs.authStatus.textContent = readableError(error);
   } finally {
+    refs.authSubmit.disabled = false;
+  }
+}
+
+async function handleGoogleSignIn() {
+  refs.authStatus.style.color = "#0f4c49";
+  refs.authStatus.textContent = "جارٍ تسجيل الدخول عبر Google...";
+  refs.googleLoginBtn.disabled = true;
+  refs.authSubmit.disabled = true;
+
+  try {
+    if (shouldUseRedirectForGoogle()) {
+      await signInWithRedirect(auth, googleProvider);
+      return;
+    }
+    await signInWithPopup(auth, googleProvider);
+  } catch (error) {
+    const code = error?.code || "";
+    if (code.includes("auth/popup-blocked") || code.includes("auth/operation-not-supported-in-this-environment")) {
+      await signInWithRedirect(auth, googleProvider);
+      return;
+    }
+    refs.authStatus.style.color = "#b3261e";
+    refs.authStatus.textContent = readableError(error);
+  } finally {
+    refs.googleLoginBtn.disabled = false;
     refs.authSubmit.disabled = false;
   }
 }
@@ -1005,7 +1039,7 @@ function usernameToEmail(username) {
   const partA = (hashA >>> 0).toString(16).padStart(8, "0");
   const partB = (hashB >>> 0).toString(16).padStart(8, "0");
   const lengthPart = bytes.length.toString(16).padStart(4, "0");
-  return `u${partA}${partB}${lengthPart}@writer.local`;
+  return `u${partA}${partB}${lengthPart}@writerapp.dev`;
 }
 
 function escapeHtml(text) {
@@ -1017,13 +1051,48 @@ function escapeHtml(text) {
     .replace(/'/g, "&#039;");
 }
 
+async function ensureUserProfile(user) {
+  const profileRef = ref(db, `users/${user.uid}/profile`);
+  const profileSnap = await get(profileRef);
+  const profile = profileSnap.exists() ? profileSnap.val() : null;
+  const username = (user.displayName || profile?.username || "كاتب").trim() || "كاتب";
+
+  if (!profileSnap.exists()) {
+    await set(profileRef, {
+      username,
+      createdAt: Date.now(),
+      provider: user.providerData?.[0]?.providerId || "password",
+    });
+  } else if (!profile?.username) {
+    await update(profileRef, { username });
+  }
+
+  if (user.displayName !== username) {
+    await updateProfile(user, { displayName: username });
+  }
+}
+
+function shouldUseRedirectForGoogle() {
+  const ua = navigator.userAgent || "";
+  const mobileUa = /Android|iPhone|iPad|iPod|IEMobile|Opera Mini/i.test(ua);
+  return mobileUa;
+}
+
 function readableError(error) {
   const code = error?.code || "";
   if (error?.message && !code) return error.message;
   if (code.includes("auth/email-already-in-use")) return "اسم المستخدم مستخدم بالفعل.";
   if (code.includes("auth/user-not-found")) return "اسم المستخدم غير موجود.";
+  if (code.includes("auth/invalid-email")) return "اسم المستخدم المدخل غير صالح.";
   if (code.includes("auth/invalid-credential")) return "بيانات الدخول غير صحيحة.";
   if (code.includes("auth/wrong-password")) return "كلمة المرور غير صحيحة.";
+  if (code.includes("auth/popup-closed-by-user")) return "تم إغلاق نافذة Google قبل إكمال الدخول.";
+  if (code.includes("auth/popup-blocked")) return "المتصفح منع نافذة Google. سيتم التحويل التلقائي.";
+  if (code.includes("auth/account-exists-with-different-credential")) return "هذا البريد مرتبط بطريقة تسجيل دخول مختلفة.";
+  if (code.includes("auth/unauthorized-domain")) return "الدومين غير مضاف في Authorized domains داخل Firebase.";
+  if (code.includes("auth/operation-not-allowed")) return "تفعيل Email/Password غير موجود في Firebase Authentication.";
+  if (code.includes("auth/app-not-authorized")) return "الدومين الحالي غير مضاف في Authorized domains داخل Firebase.";
+  if (code.includes("auth/invalid-api-key")) return "Firebase API Key غير صحيح أو غير مفعّل.";
   if (code.includes("auth/too-many-requests")) return "محاولات كثيرة. جرّب لاحقًا.";
   if (code.includes("auth/network-request-failed")) return "تعذر الاتصال بالإنترنت.";
   return "حدث خطأ. حاول مرة أخرى.";
