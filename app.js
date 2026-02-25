@@ -2,10 +2,10 @@ import { initializeApp } from "https://www.gstatic.com/firebasejs/10.14.1/fireba
 import {
   createUserWithEmailAndPassword,
   getAuth,
+  getRedirectResult,
   GoogleAuthProvider,
   onAuthStateChanged,
   signInWithEmailAndPassword,
-  signInWithPopup,
   signInWithRedirect,
   signOut,
   updateProfile,
@@ -27,6 +27,7 @@ const firebaseApp = initializeApp(firebaseConfig);
 const auth = getAuth(firebaseApp);
 const db = getDatabase(firebaseApp);
 const googleProvider = new GoogleAuthProvider();
+googleProvider.setCustomParameters({ prompt: "select_account" });
 
 const numberFormat = new Intl.NumberFormat("ar-EG");
 
@@ -87,6 +88,7 @@ let toastTimer = null;
 bindUI();
 setAuthMode("login");
 showView("auth");
+checkRedirectResult();
 
 onAuthStateChanged(auth, async (user) => {
   if (state.libraryUnsubscribe) {
@@ -240,24 +242,16 @@ async function handleAuthSubmit(event) {
 
 async function handleGoogleSignIn() {
   refs.authStatus.style.color = "#0f4c49";
-  refs.authStatus.textContent = "جارٍ تسجيل الدخول عبر Google...";
+  refs.authStatus.textContent = "جارٍ التحويل إلى Google...";
   refs.googleLoginBtn.disabled = true;
   refs.authSubmit.disabled = true;
 
   try {
-    if (shouldUseRedirectForGoogle()) {
-      await signInWithRedirect(auth, googleProvider);
-      return;
-    }
-    await signInWithPopup(auth, googleProvider);
+    await signInWithRedirect(auth, googleProvider);
   } catch (error) {
-    const code = error?.code || "";
-    if (code.includes("auth/popup-blocked") || code.includes("auth/operation-not-supported-in-this-environment")) {
-      await signInWithRedirect(auth, googleProvider);
-      return;
-    }
     refs.authStatus.style.color = "#b3261e";
-    refs.authStatus.textContent = readableError(error);
+    refs.authStatus.textContent = withErrorCode(readableError(error), error);
+    console.error("Google sign-in failed:", error);
   } finally {
     refs.googleLoginBtn.disabled = false;
     refs.authSubmit.disabled = false;
@@ -1072,10 +1066,22 @@ async function ensureUserProfile(user) {
   }
 }
 
-function shouldUseRedirectForGoogle() {
-  const ua = navigator.userAgent || "";
-  const mobileUa = /Android|iPhone|iPad|iPod|IEMobile|Opera Mini/i.test(ua);
-  return mobileUa;
+async function checkRedirectResult() {
+  try {
+    const result = await getRedirectResult(auth);
+    if (result?.user) {
+      showToast("تم تسجيل الدخول عبر Google.");
+    }
+  } catch (error) {
+    refs.authStatus.style.color = "#b3261e";
+    refs.authStatus.textContent = withErrorCode(readableError(error), error);
+    console.error("Google redirect result error:", error);
+  }
+}
+
+function withErrorCode(message, error) {
+  const code = error?.code ? ` (${error.code})` : "";
+  return `${message}${code}`;
 }
 
 function readableError(error) {
@@ -1087,9 +1093,10 @@ function readableError(error) {
   if (code.includes("auth/invalid-credential")) return "بيانات الدخول غير صحيحة.";
   if (code.includes("auth/wrong-password")) return "كلمة المرور غير صحيحة.";
   if (code.includes("auth/popup-closed-by-user")) return "تم إغلاق نافذة Google قبل إكمال الدخول.";
-  if (code.includes("auth/popup-blocked")) return "المتصفح منع نافذة Google. سيتم التحويل التلقائي.";
+  if (code.includes("auth/popup-blocked")) return "المتصفح منع نافذة Google.";
   if (code.includes("auth/account-exists-with-different-credential")) return "هذا البريد مرتبط بطريقة تسجيل دخول مختلفة.";
   if (code.includes("auth/unauthorized-domain")) return "الدومين غير مضاف في Authorized domains داخل Firebase.";
+  if (code.includes("auth/operation-not-supported-in-this-environment")) return "هذا المتصفح لا يدعم طريقة تسجيل Google الحالية.";
   if (code.includes("auth/operation-not-allowed")) return "تفعيل Email/Password غير موجود في Firebase Authentication.";
   if (code.includes("auth/app-not-authorized")) return "الدومين الحالي غير مضاف في Authorized domains داخل Firebase.";
   if (code.includes("auth/invalid-api-key")) return "Firebase API Key غير صحيح أو غير مفعّل.";
