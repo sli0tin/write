@@ -1,0 +1,222 @@
+<!doctype html>
+<html lang="ar" dir="rtl">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>محرر الرواية</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Cairo:wght@400;600;700;800&family=Markazi+Text:wght@500;700&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="styles.css" />
+    <script defer src="https://cdn.jsdelivr.net/npm/html2canvas@1.4.1/dist/html2canvas.min.js"></script>
+    <script defer src="https://cdn.jsdelivr.net/npm/jspdf@2.5.1/dist/jspdf.umd.min.js"></script>
+    <script type="module" defer src="app.js"></script>
+  </head>
+  <body>
+    <div class="bg-shape bg-shape-1"></div>
+    <div class="bg-shape bg-shape-2"></div>
+    <div class="bg-grid"></div>
+
+    <main class="app-shell">
+      <section id="auth-view" class="view">
+        <div class="auth-card card-surface">
+          <h1>محرر الكتابة الإبداعية</h1>
+          <p class="subtle">سجّل دخولك أو أنشئ حسابًا وابدأ كتابة قصتك أو روايتك.</p>
+
+          <div class="auth-switch">
+            <button id="login-mode-btn" class="mode-btn active" type="button">تسجيل دخول</button>
+            <button id="signup-mode-btn" class="mode-btn" type="button">إنشاء حساب</button>
+          </div>
+
+          <form id="auth-form" class="auth-form">
+            <label class="field-label" for="auth-username">اسم المستخدم</label>
+            <input id="auth-username" class="field-input" type="text" autocomplete="username" required />
+
+            <label class="field-label" for="auth-password">كلمة المرور</label>
+            <input
+              id="auth-password"
+              class="field-input"
+              type="password"
+              autocomplete="current-password"
+              minlength="8"
+              required
+            />
+
+            <div id="confirm-wrap" class="confirm-wrap hidden">
+              <label class="field-label" for="auth-confirm">تأكيد كلمة المرور</label>
+              <input id="auth-confirm" class="field-input" type="password" minlength="8" />
+            </div>
+
+            <button id="auth-submit" class="cta-btn" type="submit">دخول</button>
+            <p id="auth-status" class="status-text" aria-live="polite"></p>
+          </form>
+        </div>
+      </section>
+
+      <section id="home-view" class="view hidden">
+        <header class="topbar card-surface">
+          <div class="topbar-title-wrap">
+            <h2>الصفحة الرئيسية</h2>
+            <p id="welcome-text" class="subtle"></p>
+          </div>
+
+          <div class="topbar-actions">
+            <div class="menu-wrap">
+              <button class="icon-btn primary" data-toggle-menu="home-create-menu" type="button" aria-label="إضافة جديد">
+                +
+              </button>
+              <div id="home-create-menu" class="dropdown">
+                <button data-action="create-story" type="button">قصة</button>
+                <button data-action="create-novel" type="button">رواية</button>
+              </div>
+            </div>
+
+            <div class="menu-wrap">
+              <button class="icon-btn" data-toggle-menu="home-more-menu" type="button" aria-label="خيارات">
+                ⋮
+              </button>
+              <div id="home-more-menu" class="dropdown">
+                <button data-action="logout" type="button">حفظ وخروج</button>
+              </div>
+            </div>
+          </div>
+        </header>
+
+        <section id="home-empty" class="empty-state card-surface">
+          <h3>لا توجد كتابات بعد</h3>
+          <p class="subtle">اضغط على زر + بالأعلى لإنشاء قصة أو رواية جديدة.</p>
+        </section>
+
+        <section id="library-list" class="library-list"></section>
+      </section>
+
+      <section id="story-editor-view" class="view hidden">
+        <header class="topbar card-surface">
+          <div class="topbar-title-wrap">
+            <button class="ghost-btn" data-action="story-back-home" type="button">العودة للرئيسية</button>
+          </div>
+
+          <div class="topbar-actions">
+            <div class="menu-wrap">
+              <button class="icon-btn primary" data-toggle-menu="story-plus-menu" type="button" aria-label="خيارات الكتابة">
+                +
+              </button>
+              <div id="story-plus-menu" class="dropdown">
+                <button data-action="story-new-scene" type="button">مشهد جديد</button>
+              </div>
+            </div>
+
+            <div class="menu-wrap">
+              <button class="icon-btn" data-toggle-menu="story-more-menu" type="button" aria-label="خيارات">
+                ⋮
+              </button>
+              <div id="story-more-menu" class="dropdown">
+                <button data-action="story-download-word" type="button">تحميل Word</button>
+                <button data-action="story-download-pdf" type="button">تحميل PDF</button>
+                <button data-action="story-save-exit" type="button">حفظ وخروج</button>
+              </div>
+            </div>
+          </div>
+        </header>
+
+        <section class="editor-shell card-surface">
+          <input id="story-title-input" class="title-input" type="text" placeholder="اسم القصة" />
+
+          <div class="stats-row">
+            <span class="stat-pill">الكلمات: <b id="story-word-count">0</b></span>
+            <span class="stat-pill">المشاهد: <b id="story-scene-count">0</b></span>
+          </div>
+
+          <textarea id="story-textarea" class="editor-area" placeholder="ابدأ كتابة القصة هنا..."></textarea>
+        </section>
+      </section>
+
+      <section id="novel-overview-view" class="view hidden">
+        <header class="topbar card-surface">
+          <div class="topbar-title-wrap">
+            <button class="ghost-btn" data-action="novel-back-home" type="button">رجوع للرئيسية</button>
+          </div>
+
+          <div class="topbar-actions">
+            <div class="menu-wrap">
+              <button class="icon-btn primary" data-toggle-menu="novel-plus-menu" type="button" aria-label="إضافة فصل">
+                +
+              </button>
+              <div id="novel-plus-menu" class="dropdown">
+                <button data-action="novel-add-chapter" type="button">فصل جديد</button>
+              </div>
+            </div>
+
+            <div class="menu-wrap">
+              <button class="icon-btn" data-toggle-menu="novel-more-menu" type="button" aria-label="خيارات الرواية">
+                ⋮
+              </button>
+              <div id="novel-more-menu" class="dropdown">
+                <button data-action="novel-download-word" type="button">تحميل Word</button>
+                <button data-action="novel-download-pdf" type="button">تحميل PDF</button>
+                <button data-action="novel-delete" class="danger" type="button">حذف الرواية</button>
+              </div>
+            </div>
+          </div>
+        </header>
+
+        <section class="editor-shell card-surface">
+          <input id="novel-title-input" class="title-input" type="text" placeholder="اسم الرواية" />
+          <div class="stats-row">
+            <span class="stat-pill">الفصول: <b id="novel-chapter-count">0</b></span>
+            <span class="stat-pill">الكلمات: <b id="novel-word-count">0</b></span>
+            <span class="stat-pill">المشاهد: <b id="novel-scene-count">0</b></span>
+          </div>
+        </section>
+
+        <section id="chapters-list" class="chapter-list"></section>
+      </section>
+
+      <section id="chapter-editor-view" class="view hidden">
+        <header class="topbar card-surface">
+          <div class="topbar-title-wrap">
+            <button class="ghost-btn" data-action="chapter-back-overview" type="button">رجوع للرواية</button>
+          </div>
+
+          <div class="topbar-actions">
+            <div class="menu-wrap">
+              <button class="icon-btn primary" data-toggle-menu="chapter-plus-menu" type="button" aria-label="إضافة">
+                +
+              </button>
+              <div id="chapter-plus-menu" class="dropdown">
+                <button data-action="chapter-new-scene" type="button">مشهد جديد</button>
+                <button data-action="chapter-new-chapter" type="button">فصل جديد</button>
+              </div>
+            </div>
+
+            <div class="menu-wrap">
+              <button class="icon-btn" data-toggle-menu="chapter-more-menu" type="button" aria-label="خيارات الفصل">
+                ⋮
+              </button>
+              <div id="chapter-more-menu" class="dropdown">
+                <button data-action="chapter-download-word" type="button">تحميل Word</button>
+                <button data-action="chapter-download-pdf" type="button">تحميل PDF</button>
+                <button data-action="chapter-save-exit" type="button">حفظ وخروج</button>
+              </div>
+            </div>
+          </div>
+        </header>
+
+        <section class="editor-shell card-surface">
+          <input id="chapter-title-input" class="chapter-title-input" type="text" placeholder="عنوان الفصل" />
+          <div class="stats-row">
+            <span class="stat-pill">الكلمات: <b id="chapter-word-count">0</b></span>
+            <span class="stat-pill">المشاهد: <b id="chapter-scene-count">0</b></span>
+          </div>
+          <textarea id="chapter-textarea" class="editor-area" placeholder="ابدأ كتابة الفصل هنا..."></textarea>
+        </section>
+      </section>
+    </main>
+
+    <div id="toast" class="toast hidden" aria-live="polite"></div>
+    <div id="pdf-render-root"></div>
+  </body>
+</html>
