@@ -5,6 +5,8 @@ import {
   getRedirectResult,
   GoogleAuthProvider,
   onAuthStateChanged,
+  sendEmailVerification,
+  sendPasswordResetEmail,
   signInWithEmailAndPassword,
   signInWithRedirect,
   signOut,
@@ -43,12 +45,16 @@ const refs = {
   loginModeBtn: document.getElementById("login-mode-btn"),
   signupModeBtn: document.getElementById("signup-mode-btn"),
   authForm: document.getElementById("auth-form"),
+  emailWrap: document.getElementById("email-wrap"),
+  authEmail: document.getElementById("auth-email"),
+  authIdentifierLabel: document.getElementById("auth-identifier-label"),
   authUsername: document.getElementById("auth-username"),
   authPassword: document.getElementById("auth-password"),
   authConfirm: document.getElementById("auth-confirm"),
   confirmWrap: document.getElementById("confirm-wrap"),
   authSubmit: document.getElementById("auth-submit"),
   googleLoginBtn: document.getElementById("google-login-btn"),
+  forgotPasswordBtn: document.getElementById("forgot-password-btn"),
   authStatus: document.getElementById("auth-status"),
   welcomeText: document.getElementById("welcome-text"),
   homeEmpty: document.getElementById("home-empty"),
@@ -57,6 +63,9 @@ const refs = {
   storyTextarea: document.getElementById("story-textarea"),
   storyWordCount: document.getElementById("story-word-count"),
   storySceneCount: document.getElementById("story-scene-count"),
+  storySaveState: document.getElementById("story-save-state"),
+  storySaveIcon: document.getElementById("story-save-icon"),
+  storySaveText: document.getElementById("story-save-text"),
   novelTitleInput: document.getElementById("novel-title-input"),
   novelChapterCount: document.getElementById("novel-chapter-count"),
   novelWordCount: document.getElementById("novel-word-count"),
@@ -66,6 +75,9 @@ const refs = {
   chapterTextarea: document.getElementById("chapter-textarea"),
   chapterWordCount: document.getElementById("chapter-word-count"),
   chapterSceneCount: document.getElementById("chapter-scene-count"),
+  chapterSaveState: document.getElementById("chapter-save-state"),
+  chapterSaveIcon: document.getElementById("chapter-save-icon"),
+  chapterSaveText: document.getElementById("chapter-save-text"),
   toast: document.getElementById("toast"),
   pdfRoot: document.getElementById("pdf-render-root"),
 };
@@ -83,6 +95,10 @@ const state = {
 };
 
 const saveTimers = {};
+const saveInFlight = {};
+const saveQueued = {};
+const saveTasks = {};
+const saveIndicators = {};
 let toastTimer = null;
 
 bindUI();
@@ -111,30 +127,54 @@ onAuthStateChanged(auth, async (user) => {
     return;
   }
 
-  await ensureUserProfile(user);
-
-  const profileSnap = await get(ref(db, `users/${user.uid}/profile`));
-  const profile = profileSnap.exists() ? profileSnap.val() : {};
-  state.username = user.displayName || profile.username || "كاتب";
-  refs.welcomeText.textContent = `مرحبًا ${state.username}`;
-
-  const libraryRef = ref(db, `users/${user.uid}/library`);
-  state.libraryUnsubscribe = onValue(libraryRef, (snapshot) => {
-    const data = snapshot.val() || {};
-    state.library = Object.entries(data)
-      .map(([id, item]) => ({ ...item, id: item?.id || id }))
-      .sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0));
-
-    if (state.currentView === "home") {
-      renderHome();
+  try {
+    if (isPasswordUser(user) && !user.emailVerified) {
+      refs.authStatus.style.color = "#b3261e";
+      refs.authStatus.textContent = "يجب تأكيد البريد الإلكتروني أولًا.";
+      await signOut(auth);
+      showView("auth");
+      return;
     }
-    if (state.currentView === "novelOverview") {
-      renderNovelOverview();
-    }
-  });
 
-  showView("home");
-  renderHome();
+    await ensureUserProfile(user);
+
+    const profileSnap = await get(ref(db, `users/${user.uid}/profile`));
+    const profile = profileSnap.exists() ? profileSnap.val() : {};
+    state.username = user.displayName || profile.username || emailToDefaultUsername(user.email) || "كاتب";
+    refs.welcomeText.textContent = `مرحبًا ${state.username}`;
+
+    const libraryRef = ref(db, `users/${user.uid}/library`);
+    state.libraryUnsubscribe = onValue(
+      libraryRef,
+      (snapshot) => {
+        const data = snapshot.val() || {};
+        state.library = Object.entries(data)
+          .map(([id, item]) => ({ ...item, id: item?.id || id }))
+          .sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0));
+
+        if (state.currentView === "home") {
+          renderHome();
+        }
+        if (state.currentView === "novelOverview") {
+          renderNovelOverview();
+        }
+      },
+      (error) => {
+        console.error("Library subscription failed:", error);
+        showToast(withErrorCode("تعذر تحميل المكتبة.", error), true);
+      }
+    );
+
+    showView("home");
+    renderHome();
+  } catch (error) {
+    console.error("Auth initialization error:", error);
+    state.username = user.displayName || emailToDefaultUsername(user.email) || "كاتب";
+    refs.welcomeText.textContent = `مرحبًا ${state.username}`;
+    showView("home");
+    renderHome();
+    showToast(withErrorCode("تم تسجيل الدخول لكن تعذر تحميل بيانات القاعدة.", error), true);
+  }
 });
 
 function bindUI() {
@@ -142,13 +182,14 @@ function bindUI() {
   refs.signupModeBtn.addEventListener("click", () => setAuthMode("signup"));
   refs.authForm.addEventListener("submit", handleAuthSubmit);
   refs.googleLoginBtn.addEventListener("click", handleGoogleSignIn);
+  refs.forgotPasswordBtn.addEventListener("click", handleForgotPassword);
 
   refs.storyTitleInput.addEventListener("input", () => {
-    scheduleSave("story", saveCurrentStory);
+    scheduleSave("story", saveCurrentStory, 90, "story");
   });
   refs.storyTextarea.addEventListener("input", () => {
     updateStoryStats();
-    scheduleSave("story", saveCurrentStory);
+    scheduleSave("story", saveCurrentStory, 90, "story");
   });
 
   refs.novelTitleInput.addEventListener("input", () => {
@@ -156,11 +197,11 @@ function bindUI() {
   });
 
   refs.chapterTitleInput.addEventListener("input", () => {
-    scheduleSave("chapter", saveCurrentChapter);
+    scheduleSave("chapter", saveCurrentChapter, 90, "chapter");
   });
   refs.chapterTextarea.addEventListener("input", () => {
     updateChapterStats();
-    scheduleSave("chapter", saveCurrentChapter);
+    scheduleSave("chapter", saveCurrentChapter, 90, "chapter");
   });
 
   document.addEventListener("click", (event) => {
@@ -193,7 +234,11 @@ function setAuthMode(mode) {
   const signUpMode = mode === "signup";
   refs.loginModeBtn.classList.toggle("active", !signUpMode);
   refs.signupModeBtn.classList.toggle("active", signUpMode);
+  refs.emailWrap.classList.toggle("hidden", !signUpMode);
   refs.confirmWrap.classList.toggle("hidden", !signUpMode);
+  refs.forgotPasswordBtn.classList.toggle("hidden", signUpMode);
+  refs.authIdentifierLabel.textContent = signUpMode ? "اسم المستخدم" : "اسم المستخدم أو الايميل";
+  refs.authUsername.placeholder = signUpMode ? "اسم المستخدم" : "اسم المستخدم أو الايميل";
   refs.authSubmit.textContent = signUpMode ? "إنشاء الحساب" : "دخول";
   refs.authStatus.textContent = "";
 }
@@ -201,42 +246,53 @@ function setAuthMode(mode) {
 async function handleAuthSubmit(event) {
   event.preventDefault();
 
-  const username = refs.authUsername.value.trim();
+  const identifier = refs.authUsername.value.trim();
+  const emailInput = refs.authEmail.value.trim();
   const password = refs.authPassword.value;
   const confirm = refs.authConfirm.value;
-
-  if (username.length < 3) {
-    refs.authStatus.textContent = "اسم المستخدم يجب أن يكون 3 أحرف على الأقل.";
-    return;
-  }
 
   if (password.length < 8) {
     refs.authStatus.textContent = "كلمة المرور يجب ألا تقل عن 8 خانات.";
     return;
   }
 
-  if (state.authMode === "signup" && password !== confirm) {
-    refs.authStatus.textContent = "تأكيد كلمة المرور غير متطابق.";
-    return;
-  }
-
   refs.authStatus.style.color = "#0f4c49";
   refs.authStatus.textContent = state.authMode === "signup" ? "جارٍ إنشاء الحساب..." : "جارٍ تسجيل الدخول...";
   refs.authSubmit.disabled = true;
+  refs.googleLoginBtn.disabled = true;
 
   try {
     if (state.authMode === "signup") {
-      await signUpWithUsername(username, password);
-      refs.authStatus.textContent = "تم إنشاء الحساب بنجاح.";
+      if (identifier.length < 3) {
+        throw new Error("اسم المستخدم يجب أن يكون 3 أحرف على الأقل.");
+      }
+      if (!isValidEmail(emailInput)) {
+        throw new Error("اكتب بريدًا إلكترونيًا صحيحًا.");
+      }
+      if (password !== confirm) {
+        throw new Error("تأكيد كلمة المرور غير متطابق.");
+      }
+
+      await signUpWithUsername(identifier, emailInput, password);
+      refs.authPassword.value = "";
+      refs.authConfirm.value = "";
+      setAuthMode("login");
+      refs.authUsername.value = emailInput;
+      refs.authStatus.style.color = "#0f4c49";
+      refs.authStatus.textContent = "تم إنشاء الحساب. تحقق من بريدك ثم سجّل الدخول.";
     } else {
-      await loginWithUsername(username, password);
+      if (!identifier) {
+        throw new Error("اكتب اسم المستخدم أو البريد الإلكتروني.");
+      }
+      await loginWithIdentifier(identifier, password);
       refs.authStatus.textContent = "تم تسجيل الدخول.";
     }
   } catch (error) {
     refs.authStatus.style.color = "#b3261e";
-    refs.authStatus.textContent = readableError(error);
+    refs.authStatus.textContent = withErrorCode(readableError(error), error);
   } finally {
     refs.authSubmit.disabled = false;
+    refs.googleLoginBtn.disabled = false;
   }
 }
 
@@ -258,20 +314,69 @@ async function handleGoogleSignIn() {
   }
 }
 
-async function signUpWithUsername(username, password) {
-  const email = usernameToEmail(username);
-  const credential = await createUserWithEmailAndPassword(auth, email, password);
-  const now = Date.now();
+async function handleForgotPassword() {
+  const seeded = refs.authUsername.value.trim();
+  const input = window.prompt("اكتب البريد الإلكتروني لاستعادة كلمة المرور:", seeded.includes("@") ? seeded : "");
+  if (input === null) return;
 
-  await Promise.all([
-    updateProfile(credential.user, { displayName: username }),
-    set(ref(db, `users/${credential.user.uid}/profile`), { username, createdAt: now }),
-  ]);
+  const email = input.trim().toLowerCase();
+  if (!isValidEmail(email)) {
+    showToast("اكتب بريدًا إلكترونيًا صحيحًا.", true);
+    return;
+  }
+
+  try {
+    await sendPasswordResetEmail(auth, email);
+    showToast("تم إرسال رابط إعادة تعيين كلمة المرور إلى بريدك.");
+  } catch (error) {
+    showToast(withErrorCode(readableError(error), error), true);
+  }
 }
 
-async function loginWithUsername(username, password) {
-  const email = usernameToEmail(username);
+async function signUpWithUsername(username, email, password) {
+  const normalizedEmail = email.trim().toLowerCase();
+  const usernameKey = usernameToKey(username);
+  const usernameRef = ref(db, `usernames/${usernameKey}`);
+  const usernameSnap = await get(usernameRef);
+  if (usernameSnap.exists()) {
+    throw new Error("اسم المستخدم مستخدم بالفعل.");
+  }
+
+  const credential = await createUserWithEmailAndPassword(auth, normalizedEmail, password);
+  const now = Date.now();
+  const user = credential.user;
+
+  await Promise.all([
+    updateProfile(user, { displayName: username }),
+    set(ref(db, `users/${user.uid}/profile`), {
+      username,
+      email: normalizedEmail,
+      emailVerified: false,
+      provider: "password",
+      createdAt: now,
+    }),
+    set(usernameRef, { uid: user.uid, email: normalizedEmail, username, createdAt: now }),
+  ]);
+
+  await sendEmailVerification(user);
+  await signOut(auth);
+}
+
+async function loginWithIdentifier(identifier, password) {
+  const normalized = identifier.trim();
+  const email = normalized.includes("@") ? normalized.toLowerCase() : await resolveEmailByUsername(normalized);
   const credential = await signInWithEmailAndPassword(auth, email, password);
+
+  if (isPasswordUser(credential.user) && !credential.user.emailVerified) {
+    try {
+      await sendEmailVerification(credential.user);
+    } catch (error) {
+      console.error("Resend verification failed:", error);
+    }
+    await signOut(auth);
+    throw new Error("البريد غير مؤكد. أرسلنا رسالة تأكيد إلى بريدك.");
+  }
+
   if (!credential.user.displayName) {
     const profileSnap = await get(ref(db, `users/${credential.user.uid}/profile`));
     const profile = profileSnap.exists() ? profileSnap.val() : null;
@@ -321,7 +426,7 @@ async function handleAction(action, data) {
 
     case "story-save-exit":
     case "story-back-home":
-      await flushSave("story", saveCurrentStory);
+      await flushSave("story", saveCurrentStory, "story");
       goHome();
       return;
 
@@ -374,7 +479,7 @@ async function handleAction(action, data) {
       return;
 
     case "chapter-new-chapter": {
-      await flushSave("chapter", saveCurrentChapter);
+      await flushSave("chapter", saveCurrentChapter, "chapter");
       const chapterId = await addChapter(state.currentNovelId);
       await openChapterEditor(state.currentNovelId, chapterId);
       return;
@@ -382,7 +487,7 @@ async function handleAction(action, data) {
 
     case "chapter-save-exit":
     case "chapter-back-overview":
-      await flushSave("chapter", saveCurrentChapter);
+      await flushSave("chapter", saveCurrentChapter, "chapter");
       await openNovelOverview(state.currentNovelId);
       return;
 
@@ -508,6 +613,7 @@ async function openStoryEditor(storyId) {
   refs.storyTitleInput.value = story.title || "قصة بدون عنوان";
   refs.storyTextarea.value = story.content || "";
   updateStoryStats();
+  setSaveState("story", "saved");
 
   showView("storyEditor");
   refs.storyTextarea.focus();
@@ -547,6 +653,7 @@ async function openChapterEditor(novelId, chapterId) {
   refs.chapterTitleInput.value = chapter.title || "فصل";
   refs.chapterTextarea.value = chapter.content || "";
   updateChapterStats();
+  setSaveState("chapter", "saved");
 
   showView("chapterEditor");
   refs.chapterTextarea.focus();
@@ -958,20 +1065,63 @@ function goHome() {
   renderHome();
 }
 
-function scheduleSave(key, task, delay = 700) {
+function scheduleSave(key, task, delay = 700, indicator = null) {
+  saveTasks[key] = task;
+  if (indicator) {
+    saveIndicators[key] = indicator;
+    setSaveState(indicator, "saving");
+  }
   clearTimeout(saveTimers[key]);
   saveTimers[key] = window.setTimeout(() => {
-    task().catch((error) => {
-      console.error(error);
-      showToast("تعذر الحفظ التلقائي.", true);
-    });
+    void processSave(key);
   }, delay);
 }
 
-async function flushSave(key, task) {
+async function processSave(key, rethrow = false) {
   clearTimeout(saveTimers[key]);
-  delete saveTimers[key];
-  await task();
+  saveTimers[key] = null;
+
+  if (saveInFlight[key]) {
+    saveQueued[key] = true;
+    return;
+  }
+
+  const task = saveTasks[key];
+  if (!task) return;
+
+  saveInFlight[key] = true;
+  try {
+    await task();
+    if (saveIndicators[key]) {
+      setSaveState(saveIndicators[key], "saved");
+    }
+  } catch (error) {
+    console.error(error);
+    showToast("تعذر الحفظ التلقائي.", true);
+    if (saveIndicators[key]) {
+      setSaveState(saveIndicators[key], "error");
+    }
+    if (rethrow) {
+      throw error;
+    }
+  } finally {
+    saveInFlight[key] = false;
+    if (saveQueued[key]) {
+      saveQueued[key] = false;
+      void processSave(key, rethrow);
+    }
+  }
+}
+
+async function flushSave(key, task, indicator = null) {
+  saveTasks[key] = task;
+  if (indicator) {
+    saveIndicators[key] = indicator;
+    setSaveState(indicator, "saving");
+  }
+  clearTimeout(saveTimers[key]);
+  saveTimers[key] = null;
+  await processSave(key, true);
 }
 
 function toggleMenu(menuId) {
@@ -998,6 +1148,50 @@ function showToast(message, isError = false) {
   }, 2300);
 }
 
+function setSaveState(scope, status) {
+  const map = {
+    story: {
+      wrap: refs.storySaveState,
+      icon: refs.storySaveIcon,
+      text: refs.storySaveText,
+    },
+    chapter: {
+      wrap: refs.chapterSaveState,
+      icon: refs.chapterSaveIcon,
+      text: refs.chapterSaveText,
+    },
+  };
+  const target = map[scope];
+  if (!target?.wrap || !target?.icon || !target?.text) return;
+
+  target.wrap.classList.remove("is-idle", "is-saving", "is-saved", "is-error");
+
+  if (status === "saving") {
+    target.wrap.classList.add("is-saving");
+    target.icon.textContent = "…";
+    target.text.textContent = "جارٍ الحفظ";
+    return;
+  }
+
+  if (status === "saved") {
+    target.wrap.classList.add("is-saved");
+    target.icon.textContent = "✓";
+    target.text.textContent = "تم الحفظ";
+    return;
+  }
+
+  if (status === "error") {
+    target.wrap.classList.add("is-error");
+    target.icon.textContent = "!";
+    target.text.textContent = "تعذر الحفظ";
+    return;
+  }
+
+  target.wrap.classList.add("is-idle");
+  target.icon.textContent = "•";
+  target.text.textContent = "جاهز";
+}
+
 function triggerDownload(blob, filename) {
   const url = URL.createObjectURL(blob);
   const link = document.createElement("a");
@@ -1017,25 +1211,6 @@ function normalizeUsername(username) {
   return username.trim().toLowerCase();
 }
 
-function usernameToEmail(username) {
-  const normalized = normalizeUsername(username);
-  const bytes = new TextEncoder().encode(normalized);
-  let hashA = 2166136261;
-  let hashB = 2166136261;
-
-  for (const byte of bytes) {
-    hashA ^= byte;
-    hashA = Math.imul(hashA, 16777619);
-    hashB ^= byte ^ 93;
-    hashB = Math.imul(hashB, 16777619);
-  }
-
-  const partA = (hashA >>> 0).toString(16).padStart(8, "0");
-  const partB = (hashB >>> 0).toString(16).padStart(8, "0");
-  const lengthPart = bytes.length.toString(16).padStart(4, "0");
-  return `u${partA}${partB}${lengthPart}@writerapp.dev`;
-}
-
 function escapeHtml(text) {
   return String(text)
     .replace(/&/g, "&amp;")
@@ -1049,16 +1224,46 @@ async function ensureUserProfile(user) {
   const profileRef = ref(db, `users/${user.uid}/profile`);
   const profileSnap = await get(profileRef);
   const profile = profileSnap.exists() ? profileSnap.val() : null;
-  const username = (user.displayName || profile?.username || "كاتب").trim() || "كاتب";
+  const username = (user.displayName || profile?.username || emailToDefaultUsername(user.email) || "كاتب").trim() || "كاتب";
+  const provider = user.providerData?.[0]?.providerId || "password";
+  const email = user.email || profile?.email || "";
+  const patch = {
+    username,
+    email,
+    emailVerified: !!user.emailVerified,
+    provider,
+  };
 
   if (!profileSnap.exists()) {
     await set(profileRef, {
-      username,
+      ...patch,
       createdAt: Date.now(),
-      provider: user.providerData?.[0]?.providerId || "password",
     });
-  } else if (!profile?.username) {
-    await update(profileRef, { username });
+  } else {
+    const mustUpdate =
+      profile?.username !== patch.username ||
+      profile?.email !== patch.email ||
+      profile?.emailVerified !== patch.emailVerified ||
+      profile?.provider !== patch.provider;
+    if (mustUpdate) {
+      await update(profileRef, patch);
+    }
+  }
+
+  if (provider === "password") {
+    const usernameRef = ref(db, `usernames/${usernameToKey(username)}`);
+    const usernameSnap = await get(usernameRef);
+    const usernameData = usernameSnap.exists() ? usernameSnap.val() : null;
+    if (!usernameData) {
+      await set(usernameRef, {
+        uid: user.uid,
+        email,
+        username,
+        createdAt: Date.now(),
+      });
+    } else if (usernameData.uid === user.uid && usernameData.email !== email) {
+      await update(usernameRef, { email, username });
+    }
   }
 
   if (user.displayName !== username) {
@@ -1084,6 +1289,36 @@ function withErrorCode(message, error) {
   return `${message}${code}`;
 }
 
+async function resolveEmailByUsername(username) {
+  const clean = username.trim();
+  if (!clean) {
+    throw new Error("اكتب اسم المستخدم أو البريد الإلكتروني.");
+  }
+
+  const snap = await get(ref(db, `usernames/${usernameToKey(clean)}`));
+  if (!snap.exists()) {
+    throw new Error("اسم المستخدم غير موجود.");
+  }
+  const data = snap.val();
+  if (!data?.email) {
+    throw new Error("لا يوجد بريد مرتبط بهذا الحساب.");
+  }
+  return String(data.email).trim().toLowerCase();
+}
+
+function isPasswordUser(user) {
+  return Array.isArray(user?.providerData) && user.providerData.some((provider) => provider.providerId === "password");
+}
+
+function isValidEmail(email) {
+  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(String(email || "").trim());
+}
+
+function emailToDefaultUsername(email) {
+  const local = String(email || "").split("@")[0] || "";
+  return local.trim();
+}
+
 function readableError(error) {
   const code = error?.code || "";
   if (error?.message && !code) return error.message;
@@ -1096,12 +1331,17 @@ function readableError(error) {
   if (code.includes("auth/popup-blocked")) return "المتصفح منع نافذة Google.";
   if (code.includes("auth/account-exists-with-different-credential")) return "هذا البريد مرتبط بطريقة تسجيل دخول مختلفة.";
   if (code.includes("auth/unauthorized-domain")) return "الدومين غير مضاف في Authorized domains داخل Firebase.";
+  if (code.includes("auth/invalid-login-credentials")) return "بيانات الدخول غير صحيحة.";
+  if (code.includes("auth/user-disabled")) return "هذا الحساب معطّل.";
+  if (code.includes("auth/requires-recent-login")) return "يرجى إعادة تسجيل الدخول.";
+  if (code.includes("auth/invalid-action-code")) return "رابط الاستعادة/التحقق غير صالح أو منتهي.";
   if (code.includes("auth/operation-not-supported-in-this-environment")) return "هذا المتصفح لا يدعم طريقة تسجيل Google الحالية.";
-  if (code.includes("auth/operation-not-allowed")) return "تفعيل Email/Password غير موجود في Firebase Authentication.";
+  if (code.includes("auth/operation-not-allowed")) return "طريقة الدخول هذه غير مفعلة في Firebase Authentication.";
   if (code.includes("auth/app-not-authorized")) return "الدومين الحالي غير مضاف في Authorized domains داخل Firebase.";
   if (code.includes("auth/invalid-api-key")) return "Firebase API Key غير صحيح أو غير مفعّل.";
   if (code.includes("auth/too-many-requests")) return "محاولات كثيرة. جرّب لاحقًا.";
   if (code.includes("auth/network-request-failed")) return "تعذر الاتصال بالإنترنت.";
+  if (code.includes("PERMISSION_DENIED") || code.includes("permission-denied")) return "صلاحيات قاعدة البيانات لا تسمح بهذه العملية.";
   return "حدث خطأ. حاول مرة أخرى.";
 }
 
@@ -1113,4 +1353,23 @@ function ensureAuth() {
 
 function wait(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function usernameToKey(username) {
+  const normalized = normalizeUsername(username);
+  const bytes = new TextEncoder().encode(normalized);
+  let hashA = 2166136261;
+  let hashB = 2166136261;
+
+  for (const byte of bytes) {
+    hashA ^= byte;
+    hashA = Math.imul(hashA, 16777619);
+    hashB ^= byte ^ 93;
+    hashB = Math.imul(hashB, 16777619);
+  }
+
+  const partA = (hashA >>> 0).toString(16).padStart(8, "0");
+  const partB = (hashB >>> 0).toString(16).padStart(8, "0");
+  const lengthPart = bytes.length.toString(16).padStart(4, "0");
+  return `u_${partA}${partB}${lengthPart}`;
 }
