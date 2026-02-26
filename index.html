@@ -35,10 +35,12 @@
             <div id="email-wrap" class="confirm-wrap hidden">
               <label class="field-label" for="auth-email">البريد الإلكتروني</label>
               <input id="auth-email" class="field-input" type="email" autocomplete="email" />
+              <p id="email-check-hint" class="field-check hidden" aria-live="polite"></p>
             </div>
 
             <label id="auth-identifier-label" class="field-label" for="auth-username">اسم المستخدم أو الايميل</label>
             <input id="auth-username" class="field-input" type="text" autocomplete="username" required />
+            <p id="username-check-hint" class="field-check hidden" aria-live="polite"></p>
 
             <label class="field-label" for="auth-password">كلمة المرور</label>
             <input
@@ -60,6 +62,25 @@
             <button id="forgot-password-btn" class="text-link-btn" type="button">هل نسيت كلمة السر؟</button>
             <p id="auth-status" class="status-text" aria-live="polite"></p>
           </form>
+        </div>
+      </section>
+
+      <section id="verify-code-view" class="view hidden">
+        <div class="auth-card card-surface verify-card">
+          <h2>تأكيد البريد الإلكتروني</h2>
+          <p id="verify-subtitle" class="subtle"></p>
+          <p class="verify-note">إذا لم تجد الرسالة، افحص البريد غير المرغوب فيه (Spam).</p>
+
+          <label class="field-label" for="verify-code-input">رمز التحقق</label>
+          <input id="verify-code-input" class="field-input" type="text" placeholder="الصق الرمز هنا" />
+
+          <div class="verify-actions">
+            <button id="verify-code-submit-btn" class="cta-btn" type="button">تأكيد الرمز</button>
+            <button id="verify-code-resend-btn" class="social-btn" type="button">إعادة إرسال الرمز</button>
+            <button id="verify-back-login-btn" class="text-link-btn" type="button">رجوع لتسجيل الدخول</button>
+          </div>
+
+          <p id="verify-status" class="status-text" aria-live="polite"></p>
         </div>
       </section>
 
