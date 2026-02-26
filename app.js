@@ -1,5 +1,6 @@
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.14.1/firebase-app.js";
 import {
+  applyActionCode,
   createUserWithEmailAndPassword,
   getAuth,
   getRedirectResult,
@@ -35,6 +36,7 @@ const numberFormat = new Intl.NumberFormat("ar-EG");
 
 const views = {
   auth: document.getElementById("auth-view"),
+  verifyCode: document.getElementById("verify-code-view"),
   home: document.getElementById("home-view"),
   storyEditor: document.getElementById("story-editor-view"),
   novelOverview: document.getElementById("novel-overview-view"),
@@ -47,8 +49,10 @@ const refs = {
   authForm: document.getElementById("auth-form"),
   emailWrap: document.getElementById("email-wrap"),
   authEmail: document.getElementById("auth-email"),
+  emailCheckHint: document.getElementById("email-check-hint"),
   authIdentifierLabel: document.getElementById("auth-identifier-label"),
   authUsername: document.getElementById("auth-username"),
+  usernameCheckHint: document.getElementById("username-check-hint"),
   authPassword: document.getElementById("auth-password"),
   authConfirm: document.getElementById("auth-confirm"),
   confirmWrap: document.getElementById("confirm-wrap"),
@@ -56,6 +60,12 @@ const refs = {
   googleLoginBtn: document.getElementById("google-login-btn"),
   forgotPasswordBtn: document.getElementById("forgot-password-btn"),
   authStatus: document.getElementById("auth-status"),
+  verifySubtitle: document.getElementById("verify-subtitle"),
+  verifyCodeInput: document.getElementById("verify-code-input"),
+  verifyCodeSubmitBtn: document.getElementById("verify-code-submit-btn"),
+  verifyCodeResendBtn: document.getElementById("verify-code-resend-btn"),
+  verifyBackLoginBtn: document.getElementById("verify-back-login-btn"),
+  verifyStatus: document.getElementById("verify-status"),
   welcomeText: document.getElementById("welcome-text"),
   homeEmpty: document.getElementById("home-empty"),
   libraryList: document.getElementById("library-list"),
@@ -91,6 +101,7 @@ const state = {
   currentStoryId: null,
   currentNovelId: null,
   currentChapterId: null,
+  pendingVerificationEmail: "",
   libraryUnsubscribe: null,
 };
 
@@ -99,6 +110,8 @@ const saveInFlight = {};
 const saveQueued = {};
 const saveTasks = {};
 const saveIndicators = {};
+const availabilityTimers = {};
+const availabilityTokens = { email: 0, username: 0 };
 let toastTimer = null;
 
 bindUI();
@@ -120,19 +133,18 @@ onAuthStateChanged(auth, async (user) => {
   if (!user) {
     state.username = "";
     state.library = [];
+    state.pendingVerificationEmail = "";
     renderHome();
     refs.authPassword.value = "";
     refs.authConfirm.value = "";
+    refs.verifyCodeInput.value = "";
     showView("auth");
     return;
   }
 
   try {
     if (isPasswordUser(user) && !user.emailVerified) {
-      refs.authStatus.style.color = "#b3261e";
-      refs.authStatus.textContent = "يجب تأكيد البريد الإلكتروني أولًا.";
-      await signOut(auth);
-      showView("auth");
+      openVerifyCodeView(user.email || state.pendingVerificationEmail || "");
       return;
     }
 
@@ -183,6 +195,17 @@ function bindUI() {
   refs.authForm.addEventListener("submit", handleAuthSubmit);
   refs.googleLoginBtn.addEventListener("click", handleGoogleSignIn);
   refs.forgotPasswordBtn.addEventListener("click", handleForgotPassword);
+  refs.authEmail.addEventListener("input", onSignupEmailTyping);
+  refs.authUsername.addEventListener("input", onSignupUsernameTyping);
+  refs.verifyCodeSubmitBtn.addEventListener("click", handleVerifyCodeSubmit);
+  refs.verifyCodeResendBtn.addEventListener("click", handleResendVerificationCode);
+  refs.verifyBackLoginBtn.addEventListener("click", handleVerifyBackToLogin);
+  refs.verifyCodeInput.addEventListener("keydown", (event) => {
+    if (event.key === "Enter") {
+      event.preventDefault();
+      void handleVerifyCodeSubmit();
+    }
+  });
 
   refs.storyTitleInput.addEventListener("input", () => {
     scheduleSave("story", saveCurrentStory, 90, "story");
@@ -237,10 +260,21 @@ function setAuthMode(mode) {
   refs.emailWrap.classList.toggle("hidden", !signUpMode);
   refs.confirmWrap.classList.toggle("hidden", !signUpMode);
   refs.forgotPasswordBtn.classList.toggle("hidden", signUpMode);
+  refs.emailCheckHint.classList.toggle("hidden", !signUpMode);
+  refs.usernameCheckHint.classList.toggle("hidden", !signUpMode);
   refs.authIdentifierLabel.textContent = signUpMode ? "اسم المستخدم" : "اسم المستخدم أو الايميل";
   refs.authUsername.placeholder = signUpMode ? "اسم المستخدم" : "اسم المستخدم أو الايميل";
   refs.authSubmit.textContent = signUpMode ? "إنشاء الحساب" : "دخول";
   refs.authStatus.textContent = "";
+  refs.verifyStatus.textContent = "";
+
+  if (signUpMode) {
+    renderFieldCheck("email", "idle", "اكتب بريدك للتحقق من توفره.");
+    renderFieldCheck("username", "idle", "اكتب اسم المستخدم للتحقق من توفره.");
+  } else {
+    refs.emailCheckHint.textContent = "";
+    refs.usernameCheckHint.textContent = "";
+  }
 }
 
 async function handleAuthSubmit(event) {
@@ -272,20 +306,35 @@ async function handleAuthSubmit(event) {
       if (password !== confirm) {
         throw new Error("تأكيد كلمة المرور غير متطابق.");
       }
+      const emailAvailable = await isEmailAvailable(emailInput);
+      if (!emailAvailable) {
+        renderFieldCheck("email", "bad", "هذا البريد مستخدم بالفعل.");
+        throw new Error("هذا البريد مستخدم بالفعل.");
+      }
+      const usernameAvailable = await isUsernameAvailable(identifier);
+      if (!usernameAvailable) {
+        renderFieldCheck("username", "bad", "اسم المستخدم مستخدم بالفعل.");
+        throw new Error("اسم المستخدم مستخدم بالفعل.");
+      }
 
       await signUpWithUsername(identifier, emailInput, password);
       refs.authPassword.value = "";
       refs.authConfirm.value = "";
-      setAuthMode("login");
-      refs.authUsername.value = emailInput;
-      refs.authStatus.style.color = "#0f4c49";
-      refs.authStatus.textContent = "تم إنشاء الحساب. تحقق من بريدك ثم سجّل الدخول.";
+      openVerifyCodeView(emailInput.toLowerCase());
+      refs.verifyStatus.style.color = "#0f4c49";
+      refs.verifyStatus.textContent = "أرسلنا لك رسالة التحقق. الصق الرمز هنا بعد استلامه.";
     } else {
       if (!identifier) {
         throw new Error("اكتب اسم المستخدم أو البريد الإلكتروني.");
       }
-      await loginWithIdentifier(identifier, password);
-      refs.authStatus.textContent = "تم تسجيل الدخول.";
+      const result = await loginWithIdentifier(identifier, password);
+      if (result?.needsVerification) {
+        openVerifyCodeView(result.email || "");
+        refs.verifyStatus.style.color = "#0f4c49";
+        refs.verifyStatus.textContent = "حسابك غير موثق بعد. أعدنا إرسال رمز جديد.";
+      } else {
+        refs.authStatus.textContent = "تم تسجيل الدخول.";
+      }
     }
   } catch (error) {
     refs.authStatus.style.color = "#b3261e";
@@ -333,13 +382,178 @@ async function handleForgotPassword() {
   }
 }
 
+function onSignupEmailTyping() {
+  if (state.authMode !== "signup") return;
+  const email = refs.authEmail.value.trim().toLowerCase();
+  clearTimeout(availabilityTimers.email);
+
+  if (!email) {
+    renderFieldCheck("email", "idle", "اكتب بريدك للتحقق من توفره.");
+    return;
+  }
+  if (!isValidEmail(email)) {
+    renderFieldCheck("email", "bad", "صيغة البريد غير صحيحة.");
+    return;
+  }
+
+  renderFieldCheck("email", "checking", "جارٍ التحقق...");
+  availabilityTimers.email = window.setTimeout(async () => {
+    const token = ++availabilityTokens.email;
+    try {
+      const available = await isEmailAvailable(email);
+      if (token !== availabilityTokens.email) return;
+      renderFieldCheck("email", available ? "ok" : "bad", available ? "✓ البريد متاح." : "هذا البريد مستخدم بالفعل.");
+    } catch (error) {
+      if (token !== availabilityTokens.email) return;
+      renderFieldCheck("email", "bad", withErrorCode("تعذر التحقق من البريد الآن.", error));
+    }
+  }, 320);
+}
+
+function onSignupUsernameTyping() {
+  if (state.authMode !== "signup") return;
+  const username = refs.authUsername.value.trim();
+  clearTimeout(availabilityTimers.username);
+
+  if (!username) {
+    renderFieldCheck("username", "idle", "اكتب اسم المستخدم للتحقق من توفره.");
+    return;
+  }
+  if (username.length < 3) {
+    renderFieldCheck("username", "bad", "اسم المستخدم يجب أن يكون 3 أحرف على الأقل.");
+    return;
+  }
+
+  renderFieldCheck("username", "checking", "جارٍ التحقق...");
+  availabilityTimers.username = window.setTimeout(async () => {
+    const token = ++availabilityTokens.username;
+    try {
+      const available = await isUsernameAvailable(username);
+      if (token !== availabilityTokens.username) return;
+      renderFieldCheck("username", available ? "ok" : "bad", available ? "✓ اسم المستخدم متاح." : "اسم المستخدم مستخدم بالفعل.");
+    } catch (error) {
+      if (token !== availabilityTokens.username) return;
+      renderFieldCheck("username", "bad", withErrorCode("تعذر التحقق من اسم المستخدم الآن.", error));
+    }
+  }, 320);
+}
+
+function renderFieldCheck(field, status, message) {
+  const target = field === "email" ? refs.emailCheckHint : refs.usernameCheckHint;
+  if (!target) return;
+  target.classList.remove("is-checking", "is-ok", "is-bad");
+  if (status === "checking") target.classList.add("is-checking");
+  if (status === "ok") target.classList.add("is-ok");
+  if (status === "bad") target.classList.add("is-bad");
+  target.textContent = message || "";
+}
+
+async function isEmailAvailable(email) {
+  const key = emailToKey(email);
+  const snap = await get(ref(db, `emails/${key}`));
+  return !snap.exists();
+}
+
+async function isUsernameAvailable(username) {
+  const key = usernameToKey(username);
+  const snap = await get(ref(db, `usernames/${key}`));
+  return !snap.exists();
+}
+
+function openVerifyCodeView(email) {
+  state.pendingVerificationEmail = String(email || "").trim().toLowerCase();
+  refs.authStatus.textContent = "";
+  refs.verifySubtitle.textContent = state.pendingVerificationEmail
+    ? `أدخل رمز التحقق المرسل إلى ${state.pendingVerificationEmail}. يمكنك أيضًا لصق الرابط كاملًا وسنستخرج الرمز تلقائيًا.`
+    : "أدخل رمز التحقق الذي وصلك على البريد. يمكنك أيضًا لصق الرابط كاملًا.";
+  refs.verifyCodeInput.value = "";
+  refs.verifyStatus.textContent = "";
+  showView("verifyCode");
+}
+
+async function handleVerifyCodeSubmit() {
+  const rawInput = refs.verifyCodeInput.value.trim();
+  if (!rawInput) {
+    refs.verifyStatus.style.color = "#b3261e";
+    refs.verifyStatus.textContent = "اكتب رمز التحقق أولًا.";
+    return;
+  }
+
+  refs.verifyCodeSubmitBtn.disabled = true;
+  refs.verifyCodeResendBtn.disabled = true;
+  refs.verifyStatus.style.color = "#0f4c49";
+  refs.verifyStatus.textContent = "جارٍ التحقق من الرمز...";
+
+  try {
+    const code = extractVerificationCode(rawInput);
+    await applyActionCode(auth, code);
+    const verifiedEmail = auth.currentUser?.email || state.pendingVerificationEmail || "";
+    if (auth.currentUser) {
+      await auth.currentUser.reload();
+    }
+    await signOut(auth);
+    setAuthMode("login");
+    refs.authUsername.value = verifiedEmail;
+    refs.authStatus.style.color = "#178d47";
+    refs.authStatus.textContent = "تم تأكيد البريد بنجاح. سجل الدخول الآن.";
+    showView("auth");
+    showToast("تم تأكيد البريد بنجاح.");
+  } catch (error) {
+    refs.verifyStatus.style.color = "#b3261e";
+    refs.verifyStatus.textContent = withErrorCode("رمز التحقق غير صحيح أو منتهي.", error);
+  } finally {
+    refs.verifyCodeSubmitBtn.disabled = false;
+    refs.verifyCodeResendBtn.disabled = false;
+  }
+}
+
+async function handleResendVerificationCode() {
+  if (!auth.currentUser) {
+    refs.verifyStatus.style.color = "#b3261e";
+    refs.verifyStatus.textContent = "انتهت الجلسة. سجل الدخول ثم أعد الطلب.";
+    return;
+  }
+
+  refs.verifyCodeResendBtn.disabled = true;
+  refs.verifyStatus.style.color = "#0f4c49";
+  refs.verifyStatus.textContent = "جارٍ إعادة إرسال رمز جديد...";
+
+  try {
+    await sendVerificationForCurrentUser();
+    refs.verifyStatus.style.color = "#0f4c49";
+    refs.verifyStatus.textContent = "تم إرسال رمز جديد. افحص الوارد والغير مرغوب فيه.";
+  } catch (error) {
+    refs.verifyStatus.style.color = "#b3261e";
+    refs.verifyStatus.textContent = withErrorCode("تعذر إعادة إرسال الرمز.", error);
+  } finally {
+    refs.verifyCodeResendBtn.disabled = false;
+  }
+}
+
+async function handleVerifyBackToLogin() {
+  if (auth.currentUser && isPasswordUser(auth.currentUser) && !auth.currentUser.emailVerified) {
+    await signOut(auth);
+  }
+  setAuthMode("login");
+  refs.authUsername.value = state.pendingVerificationEmail || "";
+  refs.authStatus.style.color = "#0f4c49";
+  refs.authStatus.textContent = "أدخل بياناتك بعد تأكيد البريد.";
+  showView("auth");
+}
+
 async function signUpWithUsername(username, email, password) {
   const normalizedEmail = email.trim().toLowerCase();
   const usernameKey = usernameToKey(username);
+  const emailKey = emailToKey(normalizedEmail);
   const usernameRef = ref(db, `usernames/${usernameKey}`);
+  const emailRef = ref(db, `emails/${emailKey}`);
   const usernameSnap = await get(usernameRef);
+  const emailSnap = await get(emailRef);
   if (usernameSnap.exists()) {
     throw new Error("اسم المستخدم مستخدم بالفعل.");
+  }
+  if (emailSnap.exists()) {
+    throw new Error("هذا البريد مستخدم بالفعل.");
   }
 
   const credential = await createUserWithEmailAndPassword(auth, normalizedEmail, password);
@@ -356,10 +570,10 @@ async function signUpWithUsername(username, email, password) {
       createdAt: now,
     }),
     set(usernameRef, { uid: user.uid, email: normalizedEmail, username, createdAt: now }),
+    set(emailRef, { uid: user.uid, email: normalizedEmail, createdAt: now }),
   ]);
 
-  await sendEmailVerification(user);
-  await signOut(auth);
+  await sendVerificationForCurrentUser();
 }
 
 async function loginWithIdentifier(identifier, password) {
@@ -369,12 +583,11 @@ async function loginWithIdentifier(identifier, password) {
 
   if (isPasswordUser(credential.user) && !credential.user.emailVerified) {
     try {
-      await sendEmailVerification(credential.user);
+      await sendVerificationForCurrentUser();
     } catch (error) {
       console.error("Resend verification failed:", error);
     }
-    await signOut(auth);
-    throw new Error("البريد غير مؤكد. أرسلنا رسالة تأكيد إلى بريدك.");
+    return { needsVerification: true, email: credential.user.email || email };
   }
 
   if (!credential.user.displayName) {
@@ -384,6 +597,8 @@ async function loginWithIdentifier(identifier, password) {
       await updateProfile(credential.user, { displayName: profile.username });
     }
   }
+
+  return { needsVerification: false, email };
 }
 
 async function handleAction(action, data) {
@@ -1266,9 +1481,35 @@ async function ensureUserProfile(user) {
     }
   }
 
+  if (email) {
+    const emailRef = ref(db, `emails/${emailToKey(email)}`);
+    const emailSnap = await get(emailRef);
+    const emailData = emailSnap.exists() ? emailSnap.val() : null;
+    if (!emailData) {
+      await set(emailRef, {
+        uid: user.uid,
+        email,
+        createdAt: Date.now(),
+      });
+    } else if (emailData.uid === user.uid && emailData.email !== email) {
+      await update(emailRef, { email });
+    }
+  }
+
   if (user.displayName !== username) {
     await updateProfile(user, { displayName: username });
   }
+}
+
+async function sendVerificationForCurrentUser() {
+  if (!auth.currentUser) {
+    throw new Error("لا يوجد مستخدم حالي لإرسال رمز التحقق.");
+  }
+  const continueUrl = `${window.location.origin}${window.location.pathname}`;
+  await sendEmailVerification(auth.currentUser, {
+    url: continueUrl,
+    handleCodeInApp: false,
+  });
 }
 
 async function checkRedirectResult() {
@@ -1319,12 +1560,32 @@ function emailToDefaultUsername(email) {
   return local.trim();
 }
 
+function extractVerificationCode(rawValue) {
+  const value = String(rawValue || "").trim();
+  if (!value) return "";
+
+  try {
+    const parsed = new URL(value);
+    const oobCode = parsed.searchParams.get("oobCode");
+    if (oobCode) return oobCode;
+  } catch {
+    // ignore URL parse errors and try regex extraction
+  }
+
+  const queryMatch = value.match(/[?&]oobCode=([^&]+)/);
+  if (queryMatch?.[1]) {
+    return decodeURIComponent(queryMatch[1]);
+  }
+
+  return value;
+}
+
 function readableError(error) {
   const code = error?.code || "";
   if (error?.message && !code) return error.message;
-  if (code.includes("auth/email-already-in-use")) return "اسم المستخدم مستخدم بالفعل.";
+  if (code.includes("auth/email-already-in-use")) return "هذا البريد مستخدم بالفعل.";
   if (code.includes("auth/user-not-found")) return "اسم المستخدم غير موجود.";
-  if (code.includes("auth/invalid-email")) return "اسم المستخدم المدخل غير صالح.";
+  if (code.includes("auth/invalid-email")) return "البريد الإلكتروني غير صالح.";
   if (code.includes("auth/invalid-credential")) return "بيانات الدخول غير صحيحة.";
   if (code.includes("auth/wrong-password")) return "كلمة المرور غير صحيحة.";
   if (code.includes("auth/popup-closed-by-user")) return "تم إغلاق نافذة Google قبل إكمال الدخول.";
@@ -1349,6 +1610,9 @@ function ensureAuth() {
   if (!state.user) {
     throw new Error("يجب تسجيل الدخول أولًا.");
   }
+  if (isPasswordUser(state.user) && !state.user.emailVerified) {
+    throw new Error("يجب تأكيد البريد الإلكتروني قبل المتابعة.");
+  }
 }
 
 function wait(ms) {
@@ -1372,4 +1636,18 @@ function usernameToKey(username) {
   const partB = (hashB >>> 0).toString(16).padStart(8, "0");
   const lengthPart = bytes.length.toString(16).padStart(4, "0");
   return `u_${partA}${partB}${lengthPart}`;
+}
+
+function emailToKey(email) {
+  const normalized = String(email || "").trim().toLowerCase();
+  const bytes = new TextEncoder().encode(normalized);
+  let hash = 2166136261;
+
+  for (const byte of bytes) {
+    hash ^= byte;
+    hash = Math.imul(hash, 16777619);
+  }
+
+  const partA = (hash >>> 0).toString(16).padStart(8, "0");
+  return `e_${partA}_${bytes.length}`;
 }
