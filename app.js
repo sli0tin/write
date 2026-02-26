@@ -2,6 +2,7 @@ import { initializeApp } from "https://www.gstatic.com/firebasejs/10.14.1/fireba
 import {
   applyActionCode,
   createUserWithEmailAndPassword,
+  fetchSignInMethodsForEmail,
   getAuth,
   getRedirectResult,
   GoogleAuthProvider,
@@ -112,6 +113,8 @@ const saveTasks = {};
 const saveIndicators = {};
 const availabilityTimers = {};
 const availabilityTokens = { email: 0, username: 0 };
+const usernameIndex = new Set();
+let usernameIndexPromise = null;
 let toastTimer = null;
 
 bindUI();
@@ -312,9 +315,12 @@ async function handleAuthSubmit(event) {
         throw new Error("هذا البريد مستخدم بالفعل.");
       }
       const usernameAvailable = await isUsernameAvailable(identifier);
-      if (!usernameAvailable) {
+      if (usernameAvailable === false) {
         renderFieldCheck("username", "bad", "اسم المستخدم مستخدم بالفعل.");
         throw new Error("اسم المستخدم مستخدم بالفعل.");
+      }
+      if (usernameAvailable === null) {
+        throw new Error("تعذر التأكد من اسم المستخدم الآن. حاول بعد ثوانٍ.");
       }
 
       await signUpWithUsername(identifier, emailInput, password);
@@ -430,7 +436,13 @@ function onSignupUsernameTyping() {
     try {
       const available = await isUsernameAvailable(username);
       if (token !== availabilityTokens.username) return;
-      renderFieldCheck("username", available ? "ok" : "bad", available ? "✓ اسم المستخدم متاح." : "اسم المستخدم مستخدم بالفعل.");
+      if (available === true) {
+        renderFieldCheck("username", "ok", "✓ اسم المستخدم متاح.");
+      } else if (available === false) {
+        renderFieldCheck("username", "bad", "اسم المستخدم مستخدم بالفعل.");
+      } else {
+        renderFieldCheck("username", "checking", "تعذر التأكد بالكامل من الاسم الآن.");
+      }
     } catch (error) {
       if (token !== availabilityTokens.username) return;
       renderFieldCheck("username", "bad", withErrorCode("تعذر التحقق من اسم المستخدم الآن.", error));
@@ -449,7 +461,18 @@ function renderFieldCheck(field, status, message) {
 }
 
 async function isEmailAvailable(email) {
-  const key = emailToKey(email);
+  const normalized = String(email || "").trim().toLowerCase();
+
+  try {
+    const methods = await fetchSignInMethodsForEmail(auth, normalized);
+    if (Array.isArray(methods) && methods.length > 0) {
+      return false;
+    }
+  } catch (error) {
+    console.warn("fetchSignInMethodsForEmail failed:", error);
+  }
+
+  const key = emailToKey(normalized);
   const snap = await get(ref(db, `emails/${key}`));
   return !snap.exists();
 }
@@ -457,7 +480,16 @@ async function isEmailAvailable(email) {
 async function isUsernameAvailable(username) {
   const key = usernameToKey(username);
   const snap = await get(ref(db, `usernames/${key}`));
-  return !snap.exists();
+  if (snap.exists()) {
+    return false;
+  }
+
+  const profileIndexLoaded = await ensureUsernameIndex();
+  if (profileIndexLoaded) {
+    return !usernameIndex.has(normalizeUsername(username));
+  }
+
+  return null;
 }
 
 function openVerifyCodeView(email) {
@@ -572,6 +604,8 @@ async function signUpWithUsername(username, email, password) {
     set(usernameRef, { uid: user.uid, email: normalizedEmail, username, createdAt: now }),
     set(emailRef, { uid: user.uid, email: normalizedEmail, createdAt: now }),
   ]);
+
+  usernameIndex.add(normalizeUsername(username));
 
   await sendVerificationForCurrentUser();
 }
@@ -1481,6 +1515,10 @@ async function ensureUserProfile(user) {
     }
   }
 
+  if (username) {
+    usernameIndex.add(normalizeUsername(username));
+  }
+
   if (email) {
     const emailRef = ref(db, `emails/${emailToKey(email)}`);
     const emailSnap = await get(emailRef);
@@ -1558,6 +1596,34 @@ function isValidEmail(email) {
 function emailToDefaultUsername(email) {
   const local = String(email || "").split("@")[0] || "";
   return local.trim();
+}
+
+async function ensureUsernameIndex() {
+  if (usernameIndexPromise) {
+    return usernameIndexPromise;
+  }
+
+  usernameIndexPromise = (async () => {
+    try {
+      const usersSnap = await get(ref(db, "users"));
+      usernameIndex.clear();
+      if (usersSnap.exists()) {
+        const users = usersSnap.val() || {};
+        Object.values(users).forEach((userRecord) => {
+          const username = userRecord?.profile?.username;
+          if (username) {
+            usernameIndex.add(normalizeUsername(username));
+          }
+        });
+      }
+      return true;
+    } catch (error) {
+      console.warn("Username index fallback failed:", error);
+      return false;
+    }
+  })();
+
+  return usernameIndexPromise;
 }
 
 function extractVerificationCode(rawValue) {
