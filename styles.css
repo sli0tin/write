@@ -225,6 +225,22 @@ h3 {
   box-shadow: 0 10px 20px rgba(21, 35, 34, 0.08);
 }
 
+.text-link-btn {
+  border: none;
+  background: transparent;
+  color: #0b6f68;
+  font-weight: 700;
+  padding: 2px 2px 0;
+  text-align: right;
+  cursor: pointer;
+  width: fit-content;
+  align-self: flex-start;
+}
+
+.text-link-btn:hover {
+  text-decoration: underline;
+}
+
 .cta-btn {
   margin-top: 10px;
   background: linear-gradient(120deg, #c65d27, #e07b43);
@@ -266,6 +282,14 @@ h3 {
   gap: 8px;
 }
 
+.writing-view {
+  min-height: calc(100dvh - 18px);
+}
+
+.writing-view .topbar {
+  top: 8px;
+}
+
 .topbar-title-wrap {
   min-width: 0;
 }
@@ -278,6 +302,45 @@ h3 {
   display: flex;
   gap: 8px;
   align-items: center;
+}
+
+.save-state {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 7px 10px;
+  border-radius: 999px;
+  border: 1px solid rgba(31, 42, 40, 0.16);
+  background: rgba(255, 255, 255, 0.9);
+  min-width: 110px;
+  justify-content: center;
+}
+
+.save-icon {
+  font-size: 0.92rem;
+  font-weight: 900;
+}
+
+.save-state small {
+  font-size: 0.73rem;
+  font-weight: 700;
+  color: var(--muted);
+}
+
+.save-state.is-idle .save-icon {
+  color: #8c9695;
+}
+
+.save-state.is-saving .save-icon {
+  color: #c65d27;
+}
+
+.save-state.is-saved .save-icon {
+  color: #178d47;
+}
+
+.save-state.is-error .save-icon {
+  color: var(--danger);
 }
 
 .menu-wrap {
@@ -389,6 +452,28 @@ h3 {
   gap: 10px;
 }
 
+.writing-shell {
+  padding: 0;
+  gap: 0;
+  overflow: hidden;
+  min-height: calc(100dvh - 92px);
+}
+
+.writing-head {
+  position: sticky;
+  top: 0;
+  z-index: 3;
+  background: rgba(255, 255, 255, 0.98);
+  border-bottom: 1px solid rgba(31, 42, 40, 0.12);
+  padding: 10px 12px;
+}
+
+.paper-wrap {
+  flex: 1;
+  overflow: auto;
+  background: #fff;
+}
+
 .title-input {
   font-size: clamp(1.45rem, 5vw, 2rem);
   font-weight: 700;
@@ -420,6 +505,17 @@ h3 {
   line-height: 2.05;
   font-size: 1.08rem;
   resize: vertical;
+}
+
+.paper-wrap .editor-area {
+  height: 100%;
+  min-height: 100%;
+  border: none;
+  border-radius: 0;
+  outline: none;
+  background: #fff;
+  resize: none;
+  padding: 22px 16px 38px;
 }
 
 .chapter-list {
@@ -542,5 +638,13 @@ h3 {
   .editor-area {
     min-height: 66vh;
     font-size: 1.15rem;
+  }
+
+  .writing-shell {
+    min-height: calc(100dvh - 104px);
+  }
+
+  .paper-wrap .editor-area {
+    padding: 24px 24px 42px;
   }
 }
