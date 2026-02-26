@@ -32,7 +32,12 @@
           </div>
 
           <form id="auth-form" class="auth-form">
-            <label class="field-label" for="auth-username">اسم المستخدم</label>
+            <div id="email-wrap" class="confirm-wrap hidden">
+              <label class="field-label" for="auth-email">البريد الإلكتروني</label>
+              <input id="auth-email" class="field-input" type="email" autocomplete="email" />
+            </div>
+
+            <label id="auth-identifier-label" class="field-label" for="auth-username">اسم المستخدم أو الايميل</label>
             <input id="auth-username" class="field-input" type="text" autocomplete="username" required />
 
             <label class="field-label" for="auth-password">كلمة المرور</label>
@@ -52,6 +57,7 @@
 
             <button id="auth-submit" class="cta-btn" type="submit">دخول</button>
             <button id="google-login-btn" class="social-btn" type="button">تسجيل الدخول عبر Google</button>
+            <button id="forgot-password-btn" class="text-link-btn" type="button">هل نسيت كلمة السر؟</button>
             <p id="auth-status" class="status-text" aria-live="polite"></p>
           </form>
         </div>
@@ -94,10 +100,15 @@
         <section id="library-list" class="library-list"></section>
       </section>
 
-      <section id="story-editor-view" class="view hidden">
+      <section id="story-editor-view" class="view hidden writing-view">
         <header class="topbar card-surface">
           <div class="topbar-title-wrap">
             <button class="ghost-btn" data-action="story-back-home" type="button">العودة للرئيسية</button>
+          </div>
+
+          <div id="story-save-state" class="save-state is-idle" aria-live="polite">
+            <span id="story-save-icon" class="save-icon">•</span>
+            <small id="story-save-text">جاهز</small>
           </div>
 
           <div class="topbar-actions">
@@ -123,15 +134,19 @@
           </div>
         </header>
 
-        <section class="editor-shell card-surface">
-          <input id="story-title-input" class="title-input" type="text" placeholder="اسم القصة" />
+        <section class="editor-shell card-surface writing-shell">
+          <div class="writing-head">
+            <input id="story-title-input" class="title-input" type="text" placeholder="اسم القصة" />
 
-          <div class="stats-row">
-            <span class="stat-pill">الكلمات: <b id="story-word-count">0</b></span>
-            <span class="stat-pill">المشاهد: <b id="story-scene-count">0</b></span>
+            <div class="stats-row">
+              <span class="stat-pill">الكلمات: <b id="story-word-count">0</b></span>
+              <span class="stat-pill">المشاهد: <b id="story-scene-count">0</b></span>
+            </div>
           </div>
 
-          <textarea id="story-textarea" class="editor-area" placeholder="ابدأ كتابة القصة هنا..."></textarea>
+          <div class="paper-wrap">
+            <textarea id="story-textarea" class="editor-area" placeholder="ابدأ كتابة القصة هنا..."></textarea>
+          </div>
         </section>
       </section>
 
@@ -176,10 +191,15 @@
         <section id="chapters-list" class="chapter-list"></section>
       </section>
 
-      <section id="chapter-editor-view" class="view hidden">
+      <section id="chapter-editor-view" class="view hidden writing-view">
         <header class="topbar card-surface">
           <div class="topbar-title-wrap">
             <button class="ghost-btn" data-action="chapter-back-overview" type="button">رجوع للرواية</button>
+          </div>
+
+          <div id="chapter-save-state" class="save-state is-idle" aria-live="polite">
+            <span id="chapter-save-icon" class="save-icon">•</span>
+            <small id="chapter-save-text">جاهز</small>
           </div>
 
           <div class="topbar-actions">
@@ -206,13 +226,17 @@
           </div>
         </header>
 
-        <section class="editor-shell card-surface">
-          <input id="chapter-title-input" class="chapter-title-input" type="text" placeholder="عنوان الفصل" />
-          <div class="stats-row">
-            <span class="stat-pill">الكلمات: <b id="chapter-word-count">0</b></span>
-            <span class="stat-pill">المشاهد: <b id="chapter-scene-count">0</b></span>
+        <section class="editor-shell card-surface writing-shell">
+          <div class="writing-head">
+            <input id="chapter-title-input" class="chapter-title-input" type="text" placeholder="عنوان الفصل" />
+            <div class="stats-row">
+              <span class="stat-pill">الكلمات: <b id="chapter-word-count">0</b></span>
+              <span class="stat-pill">المشاهد: <b id="chapter-scene-count">0</b></span>
+            </div>
           </div>
-          <textarea id="chapter-textarea" class="editor-area" placeholder="ابدأ كتابة الفصل هنا..."></textarea>
+          <div class="paper-wrap">
+            <textarea id="chapter-textarea" class="editor-area" placeholder="ابدأ كتابة الفصل هنا..."></textarea>
+          </div>
         </section>
       </section>
     </main>
