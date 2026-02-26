@@ -165,6 +165,25 @@ h3 {
   gap: 8px;
 }
 
+.field-check {
+  margin: -2px 0 2px;
+  min-height: 20px;
+  font-size: 0.83rem;
+  font-weight: 700;
+}
+
+.field-check.is-checking {
+  color: #7a6550;
+}
+
+.field-check.is-ok {
+  color: #178d47;
+}
+
+.field-check.is-bad {
+  color: var(--danger);
+}
+
 .field-label {
   font-size: 0.93rem;
   color: var(--muted);
@@ -239,6 +258,23 @@ h3 {
 
 .text-link-btn:hover {
   text-decoration: underline;
+}
+
+.verify-card h2 {
+  margin-bottom: 4px;
+}
+
+.verify-note {
+  margin: 6px 0 2px;
+  font-size: 0.89rem;
+  color: #755436;
+}
+
+.verify-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 8px;
 }
 
 .cta-btn {
